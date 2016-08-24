@@ -1,0 +1,5 @@
+#!/bin/sh
+rm -f teste.ogg.k128 teste-dec.ogg
+
+../ep -c -i teste.ogg -o teste.ogg.k128 -p blabla4732
+../ep -d -i teste.ogg.k128 -o teste-dec.ogg -p blabla4732

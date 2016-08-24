@@ -1,0 +1,2 @@
+#!/bin/sh
+java JantarDosSelvagens arquivo-complexo 30 U 

@@ -1,0 +1,21 @@
+EP1 de MAC0422 - Sistemas Operacionais
+
+Dependências:
+Este programa foi testado em ambiente GNU/Linux. Uma dependência adicional é a biblioteca glib, usada para tokenização de parâmetros.
+
+Como compilar:
+make
+
+Como executar:
+./menu-shell
+
+Observações sobre o EP / Instruções de uso:
+Foi implementado um simples shell que permite navegar no sistema de arquivos. Aoinvés de exibir um menu como descrito nos requisitos o usuário deve entrar os comandos no prompt apresentado. Os comandos disponíveis são:
+
+l - lista os arquivos no diretório corrente
+c <novo_dir> - muda o diretório corrente para o parâmetro apresentado.
+o <nome> - exibe o conteúdo de um arquivo usando o programa 'cat'. 
+e <nome> - abre um arquivo no editor de textos vi.
+x <nome> - executa um arquivo.
+q - sair do programa.
+h - exibe ajuda.

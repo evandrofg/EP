@@ -1,0 +1,15 @@
+#!/bin/sh
+
+./test-txt
+./test-ogg
+
+echo "Arquivo de texto"
+md5sum teste.txt
+md5sum teste-dec.txt
+#md5sum teste.txt.k128
+
+echo "Arquivo OGG Vorbis"
+md5sum teste.ogg
+md5sum teste-dec.ogg
+#md5sum teste.ogg.k128
+

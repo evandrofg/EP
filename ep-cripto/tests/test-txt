@@ -1,0 +1,5 @@
+#!/bin/sh
+rm -f teste.txt.k128 teste-dec.txt
+
+../ep -c -i teste.txt -o teste.txt.k128 -p blabla4732
+../ep -d -i teste.txt.k128 -o teste-dec.txt -p blabla4732

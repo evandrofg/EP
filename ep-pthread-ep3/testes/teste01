@@ -1,0 +1,2 @@
+#!/bin/sh
+java JantarDosSelvagens arquivo-simples 10 U 

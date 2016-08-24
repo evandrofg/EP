@@ -1,0 +1,204 @@
+diff -uNr orig/xv6/Makefile ep2/xv6/Makefile
+--- orig/xv6/Makefile	2011-02-28 11:32:48.000000000 -0300
++++ ep2/xv6/Makefile	2011-09-20 14:42:44.287334563 -0300
+@@ -162,6 +162,7 @@
+ 	_usertests\
+ 	_wc\
+ 	_zombie\
++	_testrecording\
+ 
+ fs.img: mkfs README $(UPROGS)
+ 	./mkfs fs.img README $(UPROGS)
+diff -uNr orig/xv6/proc.c ep2/xv6/proc.c
+--- orig/xv6/proc.c	2011-02-28 11:32:48.000000000 -0300
++++ ep2/xv6/proc.c	2011-09-20 06:51:57.240333062 -0300
+@@ -68,6 +68,10 @@
+   memset(p->context, 0, sizeof *p->context);
+   p->context->eip = (uint)forkret;
+ 
++  // initializes Recording variables
++  p->rec_flag = 0;
++  p->rec_count = 0;
++
+   return p;
+ }
+ 
+@@ -142,6 +146,8 @@
+   np->sz = proc->sz;
+   np->parent = proc;
+   *np->tf = *proc->tf;
++  // recording
++  np->rec_flag = proc->rec_flag;
+ 
+   // Clear %eax so that fork returns 0 in the child.
+   np->tf->eax = 0;
+diff -uNr orig/xv6/proc.h ep2/xv6/proc.h
+--- orig/xv6/proc.h	2011-02-28 11:32:48.000000000 -0300
++++ ep2/xv6/proc.h	2011-09-19 16:06:26.203313170 -0300
+@@ -72,6 +72,10 @@
+   struct file *ofile[NOFILE];  // Open files
+   struct inode *cwd;           // Current directory
+   char name[16];               // Process name (debugging)
++  //Recording execution
++  int rec_flag;                // Bool set by start/stop recording functions
++  int rec_count;               // Number of syscalls recorded and stored in the PCB
++  int rec_calls[256];          // Stores the number of the syscall
+ };
+ 
+ // Process memory is laid out contiguously, low addresses first:
+diff -uNr orig/xv6/syscall.c ep2/xv6/syscall.c
+--- orig/xv6/syscall.c	2011-02-28 11:32:48.000000000 -0300
++++ ep2/xv6/syscall.c	2011-09-20 14:50:36.825319242 -0300
+@@ -97,6 +97,9 @@
+ extern int sys_wait(void);
+ extern int sys_write(void);
+ extern int sys_uptime(void);
++extern int sys_fetchrecords(void);
++extern int sys_startrecording(void);
++extern int sys_stoprecording(void);
+ 
+ static int (*syscalls[])(void) = {
+ [SYS_chdir]   sys_chdir,
+@@ -120,14 +123,26 @@
+ [SYS_wait]    sys_wait,
+ [SYS_write]   sys_write,
+ [SYS_uptime]  sys_uptime,
++[SYS_fetchrecords] sys_fetchrecords,
++[SYS_startrecording] sys_startrecording,
++[SYS_stoprecording] sys_stoprecording,
+ };
+ 
+ void
+ syscall(void)
+ {
+   int num;
+-  
++
+   num = proc->tf->eax;
++
++  if (proc->rec_flag == 1)
++  {
++    proc->rec_calls[proc->rec_count] = num;
++    proc->rec_count++;
++    if (proc->rec_count == 255)
++      proc->rec_count=0;
++  }
++
+   if(num >= 0 && num < NELEM(syscalls) && syscalls[num])
+     proc->tf->eax = syscalls[num]();
+   else {
+diff -uNr orig/xv6/syscall.h ep2/xv6/syscall.h
+--- orig/xv6/syscall.h	2011-02-28 11:32:48.000000000 -0300
++++ ep2/xv6/syscall.h	2011-09-19 15:40:45.859363109 -0300
+@@ -20,3 +20,6 @@
+ #define SYS_sbrk   19
+ #define SYS_sleep  20
+ #define SYS_uptime 21
++#define SYS_fetchrecords 22
++#define SYS_startrecording 23
++#define SYS_stoprecording 24
+diff -uNr orig/xv6/sysproc.c ep2/xv6/sysproc.c
+--- orig/xv6/sysproc.c	2011-02-28 11:32:48.000000000 -0300
++++ ep2/xv6/sysproc.c	2011-09-20 14:51:18.097317902 -0300
+@@ -87,3 +87,25 @@
+   release(&tickslock);
+   return xticks;
+ }
++
++int
++sys_fetchrecords(int procnum)
++{
++  if (procnum == -1)
++    return proc->rec_count;
++  else return proc->rec_count;
++}
++
++int 
++sys_startrecording(void)
++{
++	proc->rec_flag = 1;
++  return 0;
++}
++
++int
++sys_stoprecording(void)
++{
++	proc->rec_flag = 0;
++  return 0;
++}
+diff -uNr orig/xv6/testrecording.c ep2/xv6/testrecording.c
+--- orig/xv6/testrecording.c	1969-12-31 21:00:00.000000000 -0300
++++ ep2/xv6/testrecording.c	2011-09-20 14:50:09.532320125 -0300
+@@ -0,0 +1,49 @@
++#include "types.h"
++#include "stat.h"
++#include "user.h"
++
++/* fetchrecords(int arg)
++ * if arg = -1, returns the number of syscalls.
++ * if arg >= 0, returns the type of syscall stored in position "arg".
++ * A total of 256 positions are used for storing data.
++ * If fetchrecords returns -1, an error occured.
++ */
++ 
++	
++int
++main(int argc, char *argv[])
++{
++  int pid;
++
++  startrecording();
++
++  /* Make a few system calls */
++  printf(1,"hello world\n");
++  printf(1,"uptime: %d\n",uptime());
++  
++  /* Fetch the recordings, print them */
++  printf(1,"(parent)total syscalls: %d\n", fetchrecords(-1));
++
++  /* this is not working, we don't know why
++  for (i = 0; i < 257; i++)
++    printf(1,"fetchrecords(%d): %d\n",i,fetchrecords(i));*/
++
++  /* Enter the child process and print recording data which demonstrates 
++   * the child:
++   * 1) inherits the recording flag from the parent.
++   * 2) starts with a clean slate for the recorded system calls data.
++   */
++  pid = fork();
++  if (pid == 0){
++      printf(1, "(child)total syscalls: %d\n", fetchrecords(-1));
++      /* Now make a few more syscalls and try again */
++      uptime();
++      uptime();
++      uptime();
++      printf(1, "(child)total syscalls: %d\n", fetchrecords(-1));
++  }
++  wait();
++  
++  stoprecording();
++  exit();
++}
+diff -uNr orig/xv6/user.h ep2/xv6/user.h
+--- orig/xv6/user.h	2011-02-28 11:32:48.000000000 -0300
++++ ep2/xv6/user.h	2011-09-20 02:52:33.775909858 -0300
+@@ -22,6 +22,9 @@
+ char* sbrk(int);
+ int sleep(int);
+ int uptime(void);
++int fetchrecords(int);
++int startrecording(void);
++int stoprecording(void);
+ 
+ // ulib.c
+ int stat(char*, struct stat*);
+diff -uNr orig/xv6/usys.S ep2/xv6/usys.S
+--- orig/xv6/usys.S	2011-02-28 11:32:48.000000000 -0300
++++ ep2/xv6/usys.S	2011-09-19 15:41:17.560362083 -0300
+@@ -29,3 +29,6 @@
+ SYSCALL(sbrk)
+ SYSCALL(sleep)
+ SYSCALL(uptime)
++SYSCALL(fetchrecords)
++SYSCALL(startrecording)
++SYSCALL(stoprecording)

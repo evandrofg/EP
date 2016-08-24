@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+
+import threading
+import socket
+import time
+import sys
+import os
+import getopt
+import ssl
+
+host = socket.gethostname()
+port = 8000
+socku = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sockt = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+ssl_sock = ssl.wrap_socket(sockt,
+                           ca_certs="server.crt",
+                           cert_reqs=ssl.CERT_REQUIRED)
+
+def print_table(inp):
+	msg = ""
+	for x in range(0,9):
+		if inp[x] == "0":
+			msg = msg + str(x)
+		elif inp[x] == "+":
+			msg = msg + "x"
+		elif inp[x] == "-":
+			msg = msg + "o"
+		else:
+			msg = msg + inp[x]
+	
+	print("     |     |     ")
+	print("  " + msg[0] + "  |  " + msg[1] + "  |  " + msg[2]+ "  ")
+	print("     |     |     ")
+	print("-----|-----|-----")
+	print("     |     |     ")
+	print("  " + msg[3] + "  |  " + msg[4] + "  |  " + msg[5]+ "  ")
+	print("     |     |     ")
+	print("-----|-----|-----")
+	print("     |     |     ")
+	print("  " + msg[6] + "  |  " + msg[7] + "  |  " + msg[8]+ "  ")
+	print("     |     |     ")
+
+
+def snd_msg(msg, sock, conntype):
+	if conntype == "UDP":
+		sock.sendto(msg.encode('ascii'), (host,port))
+	elif conntype == "TCP":
+		sock.sendall(msg.encode('ascii'))
+
+
+def listener(conntype):
+	while True:
+		if conntype == "TCP":
+			data = ssl_sock.recv(1024)
+		elif conntype == "UDP":
+			data, fromaddr = socku.recvfrom(1024)
+		srvmsg = data.decode('ascii')
+		msg_split = srvmsg.split()
+		
+		# print server message to user unless it's a ping
+		if msg_split[0] != "PING":
+			print ("SERV:", srvmsg)
+		
+		if msg_split[0] == "PING":
+			if conntype == "TCP":
+				snd_msg ("PONG " + msg_split[1], ssl_sock, "TCP")
+			elif conntype == "UDP":
+				snd_msg ("PONG " + msg_split[1], socku, "UDP")
+		
+		if msg_split[0] == "REQPLAY":
+				print_table(msg_split[1])
+
+
+def sender(conntype):
+	while True:
+		msg = input("> ")
+		if msg == "QUIT":
+			os.kill(os.getpid(),1)
+		if conntype == "TCP":
+			snd_msg(msg, sock, conntype)
+		else:
+			snd_msg(msg, socku, conntype)
+
+def usage():
+	print("Uso: client [--protocol=] [--port=] [--server=]")
+
+def main():
+	global port
+	global host
+	
+	try:
+		opts, args = getopt.getopt(sys.argv[1:], "hpc", ["help", "port=", "protocol=", "server="])
+	except getopt.GetoptError as err:
+		# print help information and exit:
+		print(err) # will print something like "option -a not recognized"
+		usage()
+		sys.exit(2)
+	conntype = "UDP"
+	port = 8000
+	for o, a in opts:
+		if o in ("-h", "--help"):
+			usage()
+			sys.exit()
+		elif o in ("-p", "--port"):
+			port = a
+		elif o in ("-c", "--protocol"):
+			conntype = a
+		elif o in ("-s", "--server"):
+			host = a
+		else:
+			assert False, "unhandled option"
+
+	if conntype != "UPD" and conntype != "TCP":
+		conntype = "UDP"
+	
+	port = int(port)
+	
+	if conntype == "TCP":
+		ssl_sock.connect((host,port))
+	
+	print ("Iniciando cliente em modo " + conntype + " na porta " + str(port) + " (pid: " + str(os.getpid()) + ")")
+	
+	l = threading.Thread(name='listener', target=listener, args=(conntype,))
+	s = threading.Thread(name='sender', target=sender, args=(conntype,))
+
+	l.start()
+	s.start()
+
+
+if __name__ == "__main__":
+	main()

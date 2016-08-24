@@ -1,0 +1,727 @@
+#!/usr/bin/env python3
+
+import sys
+import os
+import threading
+import socket
+import logging
+import time
+import random
+import dbm
+import ssl
+
+# cadastro de usuarios e senhas
+userpass_db = dbm.open('userpass.db', 'c')
+halloffame_db = dbm.open('halloffame.db', 'c')
+
+points_dict = {}
+
+# associa cada usuario conectado a sua conexao
+logged_udp = {}
+logged_tcp = {}
+logged_since = {}
+kicked_out = {}
+
+# usado pelo heartbeat
+heartbeat_dict = {}
+
+# guarda a proxima jogada de um usuario
+play_dict = {}
+
+logging.basicConfig(filename='server.log',format='%(asctime)s %(message)s', datefmt='%m/%d/%Y %H:%M:%S',level=logging.DEBUG)
+log = "Servidor iniciado"
+logging.info(log)
+
+class TicTacToe:
+	playerO = ""
+	playerX = ""
+	board = ([0,0,0], [0,0,0], [0,0,0])
+	next_player = -1
+	finished = False
+	draw = False
+	
+	def __init__(self):
+		self.playerO = ""
+		self.playerX = ""
+		self.board = ([0,0,0], [0,0,0], [0,0,0])
+		self.next_player = -1
+		self.finished = False
+		self.draw = False
+
+	def is_finished(self):
+		"check for a winning line"
+		for i in range(0,3):
+			if self.board[i][0] == self.board[i][1] and self.board[i][0] == self.board[i][2] and self.board[i][0] != 0:
+				self.finished = True
+				print ("Jogador " + str(self.next_player) + " ganhou a partida!")
+
+		"check for a winning column"
+		for j in range(0,3):
+			if self.board[0][j] == self.board[1][j] and self.board[0][j] == self.board[2][j] and self.board[0][j] != 0:
+				self.finished = True
+				print ("Jogador " + str(self.next_player) + " ganhou a partida!")
+
+		"check for a winning diagonal"
+		if self.board[0][0] == self.board[1][1] and self.board[0][0] == self.board[2][2] and self.board[0][0] != 0:
+			self.finished = True
+			print ("Jogador " + str(self.next_player) + " ganhou a partida!")
+
+		if self.board[0][2] == self.board[1][1] and self.board[0][2] == self.board[2][0] and self.board[0][2] != 0:
+			self.finished = True
+			print ("Jogador " + str(self.next_player) + " ganhou a partida!")
+			
+		"check for a draw"
+		cont = 0
+		for i in range(0,3):
+			for j in range(0,3):
+				if self.board[i][j] == 0:
+					cont = cont + 1
+		if cont == 0 and self.finished == False:
+			self.draw = True
+			self.finished = True
+
+	def print_board(self):
+		print (TicTacToe.board[0])
+		print (TicTacToe.board[1])
+		print (TicTacToe.board[2])
+
+def snd_msg_work(msg, param, conntype):
+	try:
+		if conntype == "UDP":
+			sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+			sock.sendto(msg.encode('ascii'), param)
+			log = "Enviado para cliente: " + msg
+			logging.info (log)
+		elif conntype == "TCP":
+			param.sendall(msg.encode('ascii'))
+			log = "Enviado para cliente: " + msg
+			logging.info (log)
+	except:
+		pass
+
+def snd_msg(msg, param, conntype):
+	s = threading.Thread(name='snd_msg_work', target=snd_msg_work, args=(msg, param, conntype,))
+	s.start()
+
+def get_play(player, board, conntype):
+	global play_dict
+
+	msg = "REQPLAY "
+	for i in range(0,3):
+		for j in range(0,3):
+			if board[i][j] == 0:
+				msg = msg + "0"
+			elif board[i][j] == 1:
+				msg = msg + "+"
+			elif board[i][j] == -1:
+				msg = msg + "-"
+
+	log = "Requesting play from " + player
+	logging.info(log)
+	if conntype == "UDP":
+		snd_msg (msg, logged_udp[player], "UDP")
+	elif conntype == "TCP":
+		snd_msg (msg, logged_tcp[player], "TCP")
+		
+	
+	# o valor -1 em play_dict indica que o usuario ainda nao escolheu
+	while play_dict[player] == -1:
+		time.sleep(1)
+
+	play = play_dict[player]
+	play_dict[player] = -1
+	return play
+
+class Match:
+	userone = ""
+	usertwo = ""
+	conn = ""
+	tictactoe = None
+
+	def __init__(self, user1, user2, conn):
+		self.userone = user1
+		self.usertwo = user2
+		self.conn = conn
+		self.tictactoe = TicTacToe()
+
+	def match(self):
+		p = self.tictactoe
+		while p.finished == False:
+			p.next_player = p.next_player * -1
+			print ("Jogador " + str(p.next_player) + " escolhe a jogada: ")
+			if p.next_player == -1:
+				a = int(get_play(self.userone, p.board, self.conn))
+			else:
+				a = int(get_play(self.usertwo, p.board, self.conn))
+			if a == 0:
+				i, j = 0,0
+			elif a == 1:
+				i, j = 0,1
+			elif a == 2:
+				i, j = 0,2
+			elif a == 3:
+				i, j = 1,0
+			elif a == 4:
+				i, j = 1,1
+			elif a == 5:
+				i, j = 1,2
+			elif a == 6:
+				i, j = 2,0
+			elif a == 7:
+				i, j = 2,1
+			elif a == 8:
+				i, j = 2,2
+			elif a == 99: # abandono
+				p.finished = True
+				p.next_player = p.next_player * -1
+				break
+			if p.board[i][j] != 0:
+				logging.info("Jogada invalida")
+				p.next_player = p.next_player * -1
+			else:
+				p.board[i][j] = p.next_player
+				p.is_finished()
+
+			#p.print_board()
+		if p.draw == True:
+			return 0
+		else:
+			return p.next_player
+
+def check_user(user):
+	k = userpass_db.firstkey()
+	while k != None:
+		if userpass_db.get(k).decode("ascii") == user:
+			return True
+		k = userpass_db.nextkey(k)
+	return False
+
+def check_userpass (user, passw):
+	if userpass_db.get(user) is None:
+		return False
+	if userpass_db.get(user).decode("ascii") == passw:
+		logging.info("Senha verificada")
+		return True
+	else:
+		return False
+
+def create_userpass (user, passw):
+	userpass_db[user] = passw
+	halloffame_db[user] = str(0)
+	log = "Usuario " + user + " criado"
+	logging.info(log)
+
+def command_CREATE(command):
+	if check_user(command[1]) == True:
+		msg = "Usuario já existe."
+		log = "Erro ao criar usuario: " + msg
+		logging.info(log)
+		return False
+	else:
+		create_userpass(command[1], command[2])
+		return True
+
+def heartbeat(user, since, conntype):
+	global heartbeat_dict
+	time.sleep(2)
+	if logged_since[user] != since:
+		return
+	while True:
+		rand = random.randint(0,9999)
+		msg = "PING " + str(rand)
+		log = "Enviando PING para " + user
+		logging.info(log)
+		if (conntype == "TCP"):
+			if user in logged_tcp:
+				snd_msg(msg, logged_tcp[user], "TCP")
+			else:
+				return
+		elif (conntype == "UDP"):
+			if user in logged_udp:
+				snd_msg(msg, logged_udp[user], "UDP")
+			else:
+				return
+		time.sleep(10)
+		if logged_since[user] != since:
+			return
+		if heartbeat_dict[user] != rand:
+			log = "Heartbeat não respondido: " + user
+			logging.info(log)
+			if conntype == "TCP":
+				snd_msg("ERR HB Hasta la vista, baby", logged_tcp[user], "TCP")
+				logged_tcp[user].close()
+			else:
+				snd_msg("ERR HB Hasta la vista, baby", logged_udp[user], "UDP")
+			kickuser (user, conntype)
+			return False
+		else:
+			log = "Heartbeat OK, user: ", user
+			logging.info(log)
+
+def command_LOGIN_udp(command, addr):
+	if len(command) < 3:
+		snd_msg("ERR Invalid login command.", addr, "UDP")
+		logging.info("ERR Invalid login command.")
+		return False
+	now = time.strftime("%d/%m/%Y %H:%M:%S")
+	if check_userpass(command[1], command[2]) == True:
+		if command[1] not in logged_udp.keys():
+			logged_udp[command[1]] = addr
+			logged_since[command[1]] = now
+			kicked_out[command[1]] = 0
+			heartbeat_dict[command[1]] = 0
+			hb = threading.Thread(name='heartbeat', target=heartbeat, args=(command[1], now, "UDP"))
+			hb.start()
+			return True
+		elif kicked_out[command[1]] == -1:
+			logged_udp[command[1]] = addr
+			logged_since[command[1]] = now
+			kicked_out[command[1]] = 0
+			heartbeat_dict[command[1]] = 0
+			hb = threading.Thread(name='heartbeat', target=heartbeat, args=(command[1], now, "UDP"))
+			hb.start()
+			return True
+		else:
+			msg = "ERR Already logged in."
+			snd_msg (msg, logged_tcp[command[1]], "TCP")
+			return False
+	else:
+		logging.info ("ERR: Wrong password")
+		snd_msg("ERR: Wrong password", addr, "UDP")
+		return False
+
+def command_LOGIN_tcp(command, conn):
+	if len(command) < 3:
+		snd_msg("ERR Invalid login command.", conn, "TCP")
+		logging.info("ERR Invalid login command.")
+		return False
+	now = time.strftime("%d/%m/%Y %H:%M:%S")
+	if check_userpass(command[1], command[2]) == True:
+		if command[1] not in logged_tcp.keys():
+			logged_tcp[command[1]] = conn
+			logged_since[command[1]] = now
+			kicked_out[command[1]] = 0
+			heartbeat_dict[command[1]] = 0
+			hb = threading.Thread(name='heartbeat', target=heartbeat, args=(command[1], now, "TCP"))
+			hb.start()
+			return True
+		elif kicked_out[command[1]] == -1:
+			logged_tcp[command[1]] = conn
+			logged_since[command[1]] = now
+			kicked_out[command[1]] = 0
+			heartbeat_dict[command[1]] = 0
+			hb = threading.Thread(name='heartbeat', target=heartbeat, args=(command[1], now, "TCP"))
+			hb.start()
+		else:
+			msg = "ERR Already logged in."
+			snd_msg (msg, logged_tcp[command[1]], "TCP")
+			return False
+	else:
+		logging.info ("ERR: Wrong password")
+		snd_msg("ERR: Wrong password", conn, "TCP")
+		return False
+
+def command_LISTUSERS(conntype):
+	msg = "LISTUSERS BEGIN" + "\n"
+	if conntype == "UDP":
+		for user in logged_udp:
+			msg = msg + logged_since[user] + " " + user
+			if user in play_dict:
+				msg = msg + " (in-game)\n"
+			else:
+				msg = msg + "\n"
+	elif conntype == "TCP":
+		for user in logged_tcp:
+			msg = msg + logged_since[user] + " " + user
+			if user in play_dict:
+				msg = msg + "(in-game)\n"
+			else:
+				msg = msg + "\n"
+	msg = msg + "LISTUSERS END"
+	logging.info("Gerado a LISTUSERS")
+	return msg
+
+def command_HALLOFFAME():
+	msg = "HALLOFFAME BEGIN" + "\n"
+	k = halloffame_db.firstkey()
+	while k != None:
+		msg = msg + k.decode("ascii") + ": " + halloffame_db.get(k).decode("ascii") + "\n"
+		k = halloffame_db.nextkey(k)
+	msg = msg + "HALLOFFAME END"
+	logging.info("Gerado o HALLOFFAME")
+	return msg
+
+def command_JOIN_udp(command, addr):
+	for remetente in logged_udp.keys():
+		if logged_udp[remetente] == addr:
+			break
+	
+	for user in logged_udp.keys():
+		if user == command[1]:
+			if remetente == user:
+				msg = "ERR can't play yourself"
+				logging.info (msg)
+				snd_msg (msg, addr, "UDP")
+				return
+			elif (user in play_dict) or remetente in play_dict:
+				msg = "ERR user in game already"
+				logging.info (msg)
+				snd_msg (msg, addr, "UDP")
+				return
+			log = "Partida contra o ", user, logged_udp[user]
+			logging.info (log)
+			snd_msg ("Enviando pedido...", logged_udp[remetente], "UDP")
+			
+			msg = "Gostaria de enfrentar o usuario " + remetente + "?"
+			snd_msg (msg, logged_udp[user], "UDP")
+			#sock_dest = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+			#sock_dest.sendto (msg.encode("ascii"), logged_udp[user])
+	log = "Pedido de partida de: " + remetente + " para: " + user
+	logging.info (log)
+
+def command_JOIN_tcp(command, conn):
+	for remetente in logged_tcp.keys():
+		if logged_tcp[remetente] == conn:
+			break
+	
+	for user in logged_tcp.keys():
+		if user == command[1]:
+			if remetente == user:
+				logging.info ("ERR can't play yourself")
+				snd_msg ("ERR can't play yourself", conn, "TCP")
+				return
+			elif (user in play_dict) or remetente in play_dict:
+				msg = "ERR user in game already"
+				logging.info (msg)
+				snd_msg (msg, addr, "TCP")
+				return
+			log = "Partida contra o ", user, logged_tcp[user]
+			logging.info (log)
+			snd_msg ("Enviando pedido...", logged_tcp[remetente], "TCP")
+			#conn.sendall ("Enviando pedido...".encode("ascii"))
+
+			msg = "Gostaria de enfrentar o usuario " + remetente + "?"
+			snd_msg (msg, logged_tcp[user], "TCP")
+			#logged_tcp[user].sendall (msg.encode("ascii"))
+	log = "Pedido de partida de: " + remetente + " para: " + user
+	logging.info (log)
+
+
+def match_ins (playerone, playertwo, conntype):
+	m = Match (playerone, playertwo, conntype)
+	winner = m.match()
+	log = "Criada partida entre " + playerone + " e " + playertwo
+	logging.info (log)
+	
+	del play_dict[playerone]
+	del play_dict[playertwo]
+	
+	if winner == 0:
+		msg = "O jogo empatou! Um ponto para " + playerone + " e " + playertwo
+		
+		points = halloffame_db.get(playerone).decode("ascii")
+		points_int = int(points) + 1 # ganha um ponto pelo empate
+		halloffame_db[playerone] = str(points_int)
+		
+		points = halloffame_db.get(playertwo).decode("ascii")
+		points_int = int(points) + 1
+		halloffame_db[playertwo] = str(points_int)
+		
+		log = "Empate entre " + playerone + " e " + playertwo
+		logging.info (log)
+	else:
+		if winner == -1:
+			msg = "O jogador " + playerone + " ganhou a partida."
+			points = halloffame_db.get(playerone).decode("ascii")
+			points_int = int(points) + 2 # ganha dois pontos pela vitoria
+			halloffame_db[playerone] = str(points_int)
+			log = "Vitoria de " + playerone + " contra " + playertwo
+			logging.info (log)
+
+		elif winner == 1:
+			msg = "O jogador " + playertwo + " ganhou a partida."
+			points = halloffame_db.get(playertwo).decode("ascii")
+			points_int = int(points) + 2
+			halloffame_db[playertwo] = str(points_int)
+			log = "Derrota de " + playerone + " contra " + playertwo
+			logging.info (log)
+
+	# avisa o resultado
+	print (msg)
+	if conntype == "UDP":
+		snd_msg (msg, logged_udp[playerone], "UDP")
+		snd_msg (msg, logged_udp[playertwo], "UDP")
+	elif conntype == "TCP":
+		snd_msg (msg, logged_tcp[playerone], "TCP")
+		snd_msg (msg, logged_tcp[playertwo], "TCP")
+	log = "Usuarios avisados do resultado : " + playerone + " e " + playertwo
+	logging.info (log)
+	return
+
+def match_udp (playerone, playertwo):
+	match_ins (playerone, playertwo, "UDP")
+
+def match_tcp (playerone, playertwo):
+	match_ins (playerone, playertwo, "TCP")
+
+def command_JOINACCEPT_udp(command, addr):
+	for playerone in logged_udp.keys():
+		if logged_udp[playerone] == addr:
+			break
+
+	for playertwo in logged_udp.keys():
+		if playertwo == command[1]:
+			break
+	
+	if (playerone in play_dict) or (playertwo in play_dict):
+		msg = "ERR user in game already, not creating: " + playerone + " vs " + playertwo
+		logging.info (msg)
+		snd_msg(msg, logged_udp[playerone], "UDP")
+		snd_msg(msg, logged_udp[playertwo], "UDP")
+		return
+	
+	play_dict[playerone] = -1
+	play_dict[playertwo] = -1
+
+	log = "Aceita a partida entre " + playerone + " e " + playertwo
+	logging.info (log)
+	w = threading.Thread(name='match_udp', target=match_udp, args=(playerone, playertwo))
+	w.start()
+
+def command_JOINACCEPT_tcp(command, conn):
+	for playerone in logged_tcp.keys():
+		if logged_tcp[playerone] == conn:
+			break
+
+	for playertwo in logged_tcp.keys():
+		if playertwo == command[1]:
+			break
+	
+	if (playerone in play_dict) or (playertwo in play_dict):
+		msg = "ERR user in game already, not creating: " + playerone + " vs " + playertwo
+		logging.info (msg)
+		snd_msg(msg, logged_udp[playerone], "UDP")
+		snd_msg(msg, logged_udp[playertwo], "UDP")
+		return
+
+	play_dict[playerone] = -1
+	play_dict[playertwo] = -1
+
+	log = "Aceita a partida entre " + playerone + " e " + playertwo
+	logging.info (log)
+	w = threading.Thread(name='match_tcp', target=match_tcp, args=(playerone, playertwo))
+	w.start()
+
+def kickuser (user, conntype):
+	log = "Kickando o usuario " + user
+	logging.info (log)
+	if conntype == "TCP":
+		del logged_tcp[user]
+	elif conntype == "UDP":
+		del logged_udp[user]
+	if user in logged_since:
+		del logged_since[user]
+#	if user in play_dict:
+#		del play_dict[user]
+	if user in heartbeat_dict:
+		del heartbeat_dict[user]
+
+def command_LOGOUT(command, param, conntype):
+	if conntype == "TCP":
+		for user in logged_tcp.keys():
+			if logged_tcp[user] == param:
+				break
+		param.close()
+		kickuser (user, "TCP")
+	elif conntype == "UDP":
+		for user in logged_udp.keys():
+			if logged_udp[user] == param:
+				break
+		kickuser (user, "UDP")
+	log = "Usuario " + user + "saiu"
+	logging.info (log)
+
+def main_udp(port_):
+	host = ''
+	port = int(port_)
+	sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+	sock.bind((host, port))
+	global play_dict
+
+	while True:
+		try:
+			data, addr = sock.recvfrom(1024)
+			msg = data.decode("ascii")
+			command = msg.split()
+		except:
+			continue
+		
+		if len(command) <= 0:
+			pass
+
+		elif command[0] == "CREATE":
+			if command_CREATE(command) == True:
+				msg = "OK User created"
+				sock.sendto (msg.encode("ascii"), addr)
+			else:
+				msg = "ERR User NOT created"
+				sock.sendto (msg.encode("ascii"), addr)
+
+		elif command[0] == "LOGIN":
+			if command_LOGIN_udp(command, addr) == True:
+				msg = "OK User logged in"
+				sock.sendto (msg.encode("ascii"), addr)
+			else:
+				msg = "ERR Error on login."
+				sock.sendto (msg.encode("ascii"), addr)
+
+		elif command[0] == "LISTUSERS":
+			msg = command_LISTUSERS("UDP")
+			print (msg)
+			sock.sendto (msg.encode("ascii"), addr)
+			
+		elif command[0] == "HALLOFFAME":
+			msg = command_HALLOFFAME()
+			sock.sendto (msg.encode("ascii"), addr)
+
+		elif command[0] == "JOIN":
+			command_JOIN_udp(command, addr)
+			
+		elif command[0] == "JOINACCEPT":
+			command_JOINACCEPT_udp(command, addr)
+			
+		elif command[0] == "PLAY":
+			for user in logged_udp.keys():
+				if logged_udp[user] == addr:
+					break
+			play_dict[user] = command[1]
+		
+		elif command[0] == "FORFEIT":
+			for user in logged_udp.keys():
+				if logged_udp[user] == addr:
+					break
+			play_dict[user] = 99
+		
+		elif command[0] == "REQBOARD":
+			for user in logged_udp.keys():
+				if logged_udp[user] == addr:
+					break
+			play_dict[user] = 9
+
+		elif command[0] == "PONG":
+			for user in logged_udp.keys():
+				if logged_udp[user] == addr:
+					break
+			heartbeat_dict[user] = int(command[1])
+		
+		elif command[0] == "LOGOUT":
+			command_LOGOUT (command, addr, "UDP")
+
+def main_tcp_work(conn, addr):
+	while True:
+		try:
+			data = conn.recv(1024)
+			msg = data.decode("utf-8")
+			command = msg.split()
+		except:
+			continue
+	
+		if len(command) <= 0:
+			pass
+
+		elif command[0] == "CREATE":
+			if command_CREATE(command) == True:
+				msg = "OK User created"
+				snd_msg(msg, conn, "TCP")
+			else:
+				msg = "ERR User NOT created"
+				snd_msg(msg, conn, "TCP")
+
+		elif command[0] == "LOGIN":
+			if command_LOGIN_tcp(command, conn) == True:
+				msg = "OK User logged in"
+				snd_msg(msg, conn, "TCP")
+				print (logged_tcp)
+			else:
+				msg = "ERR Error on login."
+				snd_msg(msg, conn, "TCP")
+
+		elif command[0] == "LISTUSERS":
+			msg = command_LISTUSERS("TCP")
+			snd_msg(msg, conn, "TCP")
+
+		elif command[0] == "HALLOFFAME":
+			msg = command_HALLOFFAME()
+			snd_msg(msg, conn, "TCP")
+		
+		elif command[0] == "JOIN":
+			command_JOIN_tcp(command, conn)
+			
+		elif command[0] == "JOINACCEPT":
+			command_JOINACCEPT_tcp(command, conn)
+			
+		elif command[0] == "PLAY":
+			for user in logged_tcp.keys():
+				if logged_tcp[user] == conn:
+					break
+			play_dict[user] = command[1]
+		
+		elif command[0] == "FORFEIT":
+			for user in logged_tcp.keys():
+				if logged_tcp[user] == conn:
+					break
+			play_dict[user] = 99
+		
+		elif command[0] == "REQBOARD":
+			for user in logged_tcp.keys():
+				if logged_tcp[user] == conn:
+					break
+			play_dict[user] = 9
+
+		elif command[0] == "PONG":
+			for user in logged_tcp.keys():
+				if logged_tcp[user] == conn:
+					break
+			heartbeat_dict[user] = int(command[1])
+
+		elif command[0] == "LOGOUT":
+			command_LOGOUT (command, conn, "TCP")
+			break
+
+	conn.close()
+
+def main_tcp(port_):
+	logging.info('TCP')
+	host = ''
+	port = port_
+	s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+	s.bind((host, port))
+	s.listen(1)
+	global play_dict
+
+	while True:
+		conn, addr = s.accept()
+		ssl_sock = ssl.wrap_socket(conn,
+                                 server_side=True,
+                                 certfile="server.crt",
+                                 keyfile="server.key")
+		t = threading.Thread(name='main_tcp_work', target=main_tcp_work, args=(ssl_sock, addr))
+		t.start()
+
+def main():
+	if len(sys.argv) < 2:
+		port = 8000
+	else:
+		port = int(sys.argv[1])
+	log = "Executando na porta " + str(port) + " com PID " + str(os.getpid()) 
+	logging.info(log)
+	print(log)
+
+	u = threading.Thread(name='main_udp', target=main_udp, args=(port,))
+	t = threading.Thread(name='main_tcp', target=main_tcp, args=(port,))
+	u.start()
+	t.start()
+
+
+if __name__ == "__main__":
+	main()

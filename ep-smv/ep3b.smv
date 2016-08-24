@@ -1,0 +1,14 @@
+--Resp: nao, é falso.
+
+MODULE main
+VAR
+  request : boolean;
+  status : {ready,busy};
+ASSIGN
+  init(status) := ready;
+  next(status) := case
+		request : busy;
+		TRUE : {ready,busy};
+		esac;
+LTLSPEC
+  G(!(request U !(status=busy)))

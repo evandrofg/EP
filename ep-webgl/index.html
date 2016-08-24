@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="UTF-8">
+  <title>Xadrez</title>
+
+  <script id="fragment-shader" type="x-shader/x-fragment">
+    precision mediump float;
+
+    uniform vec4 aColor;
+
+    void main(void) {
+      gl_FragColor = aColor;
+    }
+  </script>
+
+  <script id="vertex-shader" type="x-shader/x-vertex">
+    attribute vec3 aVertexPosition;
+    attribute vec3 aVertexNormal;
+    attribute vec4 aVertexColor;
+
+    uniform mat4 uMMatrix;
+    uniform mat4 uVMatrix;
+    uniform mat4 uPMatrix;
+
+    void main(void) {
+        gl_Position = uPMatrix * uVMatrix * uMMatrix * vec4(aVertexPosition, 1.0);
+    }
+  </script>
+
+  <script type="text/javascript" src="lib/gl-matrix.js"></script>
+  <script type="text/javascript" src="lib/jquery-2.1.0.min.js"></script>
+  <script type="text/javascript" src="lib/webgl-utils.js"></script>
+  <script type='text/javascript' src='lib/webgl-obj-loader.js'></script>
+  <script type="text/javascript" src="initShaders.js"></script>
+  <script type='text/javascript' src='app.js'></script>
+</head>
+
+<body style='padding:0; margin:0;'>
+
+    <canvas id="canvas" style="border: none;"></canvas>
+
+    <button id= "orthoFalseButton">Perspectiva</button>
+    <button id= "orthoTrueButton">Ortográfica</button>
+</body>
+
+</html>

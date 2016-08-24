@@ -1,0 +1,7 @@
+Nos estados "request, status=busy" e "!request, status=busy" a variável status=busy já satisfaz a expressão de F.
+
+O estado "request, status=ready" só pode levar aos dois estados citados acima, logo também satisfaz.
+
+Por último o estado "!request, status=ready" não satisfaz a parte esquerda da implicação, então é irrelevante.
+
+O teste pode ser feito com o arquivo ep3a.smv.
